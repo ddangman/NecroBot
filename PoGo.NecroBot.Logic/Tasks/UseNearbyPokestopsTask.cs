@@ -123,9 +123,10 @@ namespace PoGo.NecroBot.Logic.Tasks
                 if ((UseNearbyPokestopsTask._pokestopLimitReached || UseNearbyPokestopsTask._pokestopTimerReached) &&
                     (CatchPokemonTask._catchPokemonLimitReached || CatchPokemonTask._catchPokemonTimerReached))
                     return;
-
-                await SnipeMSniperTask.CheckMSniperLocation(session, cancellationToken);
-
+                if (session.LogicSettings.ActivateMSniper)
+                {
+                    await MSniperServiceTask.CheckMSniper(session, cancellationToken);
+                }
                 var fortInfo = pokeStop.Id == SetMoveToTargetTask.TARGET_ID ? SetMoveToTargetTask.FortInfo : await session.Client.Fort.GetFort(pokeStop.Id, pokeStop.Latitude, pokeStop.Longitude);
 
                 await WalkingToPokeStop(session, cancellationToken, pokeStop, fortInfo);
@@ -136,9 +137,7 @@ namespace PoGo.NecroBot.Logic.Tasks
 
                 if (session.LogicSettings.SnipeAtPokestops || session.LogicSettings.UseSnipeLocationServer)
                     await SnipePokemonTask.Execute(session, cancellationToken);
-
-                await SnipeMSniperTask.CheckMSniperLocation(session, cancellationToken);
-
+                
                 if (!await SetMoveToTargetTask.IsReachedDestination(pokeStop, session, cancellationToken))
                 {
                     pokeStop.CooldownCompleteTimestampMs = DateTime.UtcNow.ToUnixTime() + (pokeStop.Type == FortType.Gym ? session.LogicSettings.GymVisitTimeout : 5) * 60 * 1000; //5 minutes to cooldown
@@ -166,10 +165,11 @@ namespace PoGo.NecroBot.Logic.Tasks
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (!session.LogicSettings.UseGoogleWalk && !session.LogicSettings.UseYoursWalk)
-                    session.EventDispatcher.Send(new FortTargetEvent { Name = fortInfo.Name, Distance = distance, Route = "NecroBot" });
-                else
-                    BaseWalkStrategy.FortInfo = fortInfo;
+                session.EventDispatcher.Send(new FortTargetEvent { Name = fortInfo.Name, Distance = distance, Route = session.Navigation.GetStrategy(session.LogicSettings).GetWalkStrategyId() });
+
+                // Always set the fort info in base walk strategy.
+                BaseWalkStrategy.FortInfo = fortInfo;
+
                 var pokeStopDestination = new GeoCoordinate(pokeStop.Latitude, pokeStop.Longitude,
                     LocationUtils.getElevation(session, pokeStop.Latitude, pokeStop.Longitude));
 
@@ -347,7 +347,7 @@ namespace PoGo.NecroBot.Logic.Tasks
 
         private static async Task FarmPokestop(ISession session, FortData pokeStop, FortDetailsResponse fortInfo, CancellationToken cancellationToken, bool doNotRetry = false)
         {
-            if (pokeStop.CooldownCompleteTimestampMs != 0) return;
+            if (pokeStop.CooldownCompleteTimestampMs > DateTime.UtcNow.ToUnixTime()) return;
 
             FortSearchResponse fortSearch;
             var timesZeroXPawarded = 0;
